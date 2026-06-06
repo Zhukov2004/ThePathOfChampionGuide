@@ -1,0 +1,321 @@
+/* src/theme.css */
+
+/* =========================================
+ * 1. NHẬP FONT & ĐỊNH NGHĨA
+ * ========================================= */
+@import url("https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;700&family=Space+Grotesk:wght@700&display=swap");
+
+:root {
+	/* --- Phông chữ --- */
+	--font-primary: "Space Grotesk", sans-serif;
+	--font-secondary: "Open Sans", sans-serif;
+
+	/* =========================================
+	  * 2. BẢNG MÀU CƠ BẢN (Chế độ Sáng)
+	  * ========================================= */
+	/* --- Tông màu Xám --- */
+	--color-gray-100: #f8fafc;
+	--color-gray-300: #e2e8f0;
+	--color-gray-400: #71829b;
+	--color-gray-500: #64748b;
+	--color-gray-700: #334155;
+	--color-gray-800: #1e293b;
+	--color-gray-900: #0f172a;
+
+	/* --- Màu chủ đạo (Mặc định, thường bị JS ghi đè) --- */
+	--color-primary-100: #e0f2fe;
+	--color-primary-300: #38a7e7;
+	--color-primary-400: #2e9dd4;
+	--color-primary-500: #3c91c2;
+	--color-primary-600: #2989bc;
+	--color-primary-700: #2080b8;
+
+	/* --- Trạng thái giao diện --- */
+	--color-warning-500: #eab308;
+	--color-warning-700: #ca8a04;
+	--color-danger-100: #fee2e2;
+	--color-danger-500: #ef4444;
+	--color-danger-700: #b91c1c;
+
+	/* --- Màu sắc ngữ nghĩa (Sáng) --- */
+	--color-page-bg: #f1f6fc;
+	--color-surface-bg: #ffffff;
+	--color-surface-hover-bg: #f8fafc;
+	--color-border: #e2e8f0;
+	--color-border-hover: #cbd5e1;
+	--color-text-primary: var(--color-gray-900);
+	--color-text-secondary: var(--color-gray-500);
+
+	/* --- Tiêu đề & Thanh điều hướng --- */
+	--color-header-bg: var(--color-primary-500);
+	--color-header-text: #ffffff;
+	--color-nav-link-text: #ffffff;
+	--color-nav-hover-bg: rgba(255, 255, 255, 0.1);
+
+	/* --- Menu thả xuống & Hộp thoại --- */
+	--color-dropdown-bg: var(--color-modal-bg); 
+	--color-dropdown-border: var(--color-border);
+	--color-dropdown-item-text: var(--color-text-primary);
+	--color-dropdown-item-hover-bg: var(--color-surface-hover-bg);
+	
+	/* 
+	 * NỀN HỘP THOẠI (Dropdown & Modal)
+	 */
+	--color-modal-bg: #ffffff; 
+
+	/* Hiệu ứng kính mờ (Glassmorphism) */
+	--color-glass-bg: rgba(255, 255, 255, 0.3);
+	--color-glass-border: rgba(255, 255, 255, 0.5);
+	
+	/* Bảng kính (Panel Glass) */
+	--color-panel-glass-bg: rgba(15, 23, 42, 0.7);
+	--color-panel-glass-border: rgba(51, 65, 85, 0.7);
+	--color-panel-text-light: #ffffff;
+	--color-panel-text-dim: #cbd5e1;
+
+	/* --- Nút bấm (Buttons) --- */
+	--color-btn-primary-bg: var(--color-primary-600);
+	--color-btn-primary-text: #ffffff;
+	--color-btn-primary-hover-bg: var(--color-primary-700);
+	--color-btn-primary-border: var(--color-primary-700);
+
+	--color-btn-secondary-bg: var(--color-surface-bg);
+	--color-btn-secondary-text: var(--color-text-primary);
+	--color-btn-secondary-border: var(--color-border);
+	--color-btn-secondary-hover-bg: var(--color-surface-hover-bg);
+	--color-btn-secondary-hover-text: var(--color-primary-600);
+
+	--color-btn-danger-bg: var(--color-danger-500);
+	--color-btn-danger-text: #ffffff;
+	--color-btn-danger-hover-bg: var(--color-danger-700);
+	--color-btn-danger-border: var(--color-danger-700);
+
+	--color-btn-warning-bg: var(--color-warning-500);
+	--color-btn-warning-text: #ffffff;
+	--color-btn-warning-hover-bg: var(--color-warning-700);
+	--color-btn-warning-border: var(--color-warning-700);
+
+	--color-btn-ghost-bg: transparent;
+	--color-btn-ghost-text: var(--color-text-primary);
+	--color-btn-ghost-hover-bg: var(--color-surface-hover-bg);
+	--color-btn-ghost-border: transparent;
+
+	/* --- Ô nhập liệu (Forms) --- */
+	--color-input-bg: #f8fafc;
+	--color-input-border: #e2e8f0;
+	--color-input-text: var(--color-gray-900);
+	--color-input-placeholder: var(--color-gray-400);
+	--color-input-focus-border: var(--color-primary-500);
+
+	/* Hiệu ứng chuyển cảnh */
+	--theme-transition: background-color 0.3s ease, color 0.3s ease, border-color 0.3s ease;
+}
+
+/* =========================================
+  * GHI ĐÈ CHẾ ĐỘ TỐI
+  * ========================================= */
+.dark {
+	--color-page-bg: #0f172a;
+	--color-surface-bg: #1e293b;
+	--color-surface-hover-bg: #334155;
+	--color-border: #334155;
+	--color-border-hover: #475569;
+	--color-text-primary: #f8fafc;
+	--color-text-secondary: #94a3b8;
+
+	--color-glass-bg: rgba(15, 23, 42, 0.3);
+	--color-glass-border: rgba(255, 255, 255, 0.1);
+
+	--color-panel-glass-bg: rgba(2, 6, 23, 0.8);
+	--color-panel-glass-border: rgba(71, 85, 105, 0.5);
+
+	--color-gray-100: #1e293b;
+	--color-gray-900: #f8fafc;
+
+	--color-modal-bg: #1e293b;
+
+	/* --- Ghi đè Nút (Dark Mode) --- */
+	--color-btn-primary-bg: var(--color-primary-500);
+	--color-btn-primary-hover-bg: var(--color-primary-400);
+	--color-btn-primary-border: var(--color-primary-400);
+
+	--color-btn-secondary-bg: rgba(30, 41, 59, 0.5);
+	--color-btn-secondary-border: var(--color-border);
+	--color-btn-secondary-hover-bg: rgba(51, 65, 85, 0.6);
+	--color-btn-secondary-hover-text: #ffffff;
+
+	--color-dropdown-item-hover-bg: rgba(255, 255, 255, 0.1);
+
+	/* --- Ô nhập liệu (Dark Mode) --- */
+	--color-input-bg: #0f172a;
+	--color-input-border: #334155;
+	--color-input-text: #f8fafc;
+}
+
+/* =========================================
+  * LOGIC NỀN TÙY CHỈNH (Hình ảnh)
+  * ========================================= */
+.has-bg-image {
+	background-image: var(--page-bg-image);
+	background-attachment: fixed;
+	background-size: cover;
+	background-position: center;
+	background-color: transparent !important;
+	
+	/* Làm phông nền trong suốt để lộ ảnh nền */
+	--color-page-bg: transparent;
+	--color-surface-bg: rgba(24, 21, 21, 0.24); 
+	--color-border: rgba(255, 255, 255, 0.1);
+}
+
+/* Định nghĩa gốc cho màu lớp phủ để giữ cố định ngay cả khi --color-page-bg thay đổi */
+:root {
+	--color-page-bg-default: #f1f6fc;
+}
+.dark {
+	--color-page-bg-default: #000000;
+}
+
+/* Áp dụng chuyển cảnh cho các thành phần chính */
+body {
+	background-color: var(--color-page-bg);
+	color: var(--color-text-primary);
+	transition: var(--theme-transition);
+}
+
+header, nav {
+	transition: var(--theme-transition);
+}
+
+header {
+	transition: var(--theme-transition);
+	z-index: 60;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.has-bg-image header {
+	border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+	box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+}
+
+.dark.has-bg-image {
+	--color-surface-bg: rgba(19, 24, 37, 0.178); /* Gần như Slate-900 đặc nhưng có độ sâu tinh tế */
+	--color-modal-bg:  #121724; /* Đặc biệt dành cho chế độ Ảnh nền, không trong suốt */
+	--color-border: rgba(255, 255, 255, 0.1);
+	--color-text-secondary: #bdbdbd; /* Tối hơn nữa để giảm chói */
+
+	--color-dropdown-item-hover-bg: rgba(22, 28, 43, 0.637);
+
+	/* --- Ô nhập liệu (Artwork Mode) --- */
+	--color-input-bg: rgba(19, 24, 37, 0.425); 
+	--color-input-border: var(--color-border);
+
+	/* --- Ghi đè Nút (Artwork - Nhất quán viền) --- */
+	--color-btn-secondary-border: var(--color-border);
+	--color-surface-hover-bg: rgba(32, 39, 58, 0.377);
+
+	/* --- Side Panel (Artwork Mode) --- */
+	--color-panel-glass-bg: var(--color-modal-bg);
+	--color-panel-glass-border: var(--color-border);
+}
+
+.has-bg-image::before {
+	content: "";
+	position: fixed;
+	inset: 0;
+	z-index: -1;
+	background-color: var(--color-page-bg-default);
+	opacity: var(--bg-overlay-opacity, 0.7); /* Được điều chỉnh linh hoạt từ menu Cá nhân hóa */
+}
+
+/* =========================================
+  * 17. KEYFRAMES & HOẠT ẢNH (ĐÃ CẬP NHẬT)
+  * ========================================= */
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+		transform: translateY(20px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+@keyframes slideUp {
+	from {
+		opacity: 0;
+		transform: translateY(30px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+@keyframes pulseFocus {
+	0%,
+	100% {
+		box-shadow: 0 0 0 0 rgba(60, 145, 194, 0.4);
+	}
+	50% {
+		box-shadow: 0 0 0 4px rgba(60, 145, 194, 0);
+	}
+}
+
+/* HIỆU ỨNG MỚI: Lỗi kỹ thuật số (Glitch) */
+@keyframes loadingGlitch {
+	0% {
+		clip-path: inset(50% 0 30% 0);
+		transform: translate(-5px, 5px);
+	}
+	2% {
+		clip-path: inset(10% 0 80% 0);
+		transform: translate(5px, -5px);
+	}
+	4% {
+		clip-path: inset(80% 0 10% 0);
+		transform: translate(-5px, 5px);
+	}
+	6% {
+		clip-path: inset(30% 0 50% 0);
+		transform: translate(5px, -5px);
+	}
+	8% {
+		clip-path: inset(10% 0 80% 0);
+		transform: translate(-5px, 5px);
+	}
+	10% {
+		clip-path: inset(80% 0 10% 0);
+		transform: translate(5px, -5px);
+	}
+	11% {
+		clip-path: inset(0 0 0 0);
+		transform: translate(0, 0);
+	}
+	100% {
+		clip-path: inset(0 0 0 0);
+		transform: translate(0, 0);
+	}
+}
+
+/* =========================================
+  * 18. LỚP TIỆN ÍCH HOẠT ẢNH (ĐÃ CẬP NHẬT)
+  * ========================================= */
+.animate-fadeIn {
+	animation: fadeIn 0.4s ease-out forwards;
+}
+.animate-slideUp {
+	animation: slideUp 0.5s ease-out forwards;
+}
+.animate-pulse-focus {
+	animation: pulseFocus 1.2s ease-in-out infinite;
+}
+
+/* Ghi đè animate-pulse của Tailwind để nhanh hơn */
+.animate-pulse {
+	animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite !important;
+}
+
+/* Lớp Glitch mới - Rút ngắn thời gian */
+.animate-glitch {
+	animation: loadingGlitch 1s ease-in-out forwards;
+}

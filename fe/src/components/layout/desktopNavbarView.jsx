@@ -1,0 +1,487 @@
+// components/layout/DesktopNavbar.jsx
+import React, { useContext, useState, useRef, useEffect } from "react";
+import { NavLink, useNavigate, useLocation } from "react-router-dom";
+import { AuthContext } from "@/context/AuthContext.jsx";
+import { useTheme } from "@/context/ThemeContext.jsx";
+import ThemeSettings from "@/components/common/ThemeSettings.jsx";
+import GlobalSearch from "@/components/common/GlobalSearch.jsx";
+
+import Modal from "@/components/common/modal.jsx";
+import Button from "@/components/common/button.jsx";
+
+import DonateModal from "@/components/common/DonateModal.jsx";
+
+import {
+	User,
+	LogIn,
+	LogOut,
+	Settings,
+	Shield,
+	Swords,
+	Package,
+	ScrollText,
+	Gem,
+	Zap,
+	BookOpen,
+	Wrench,
+	Sparkles,
+	LoaderPinwheel,
+	Gift,
+	BookMarked,
+	Map,
+	BarChartHorizontalBig,
+	Globe,
+	Star,
+	Sun,
+	Moon,
+	Palette,
+	Book,
+	Users,
+	Coffee,
+} from "lucide-react";
+
+function DesktopNavbar({ language, handleLanguageChange, tUI, isNavVisible }) {
+	const { user, logout, isAdmin } = useContext(AuthContext);
+	const { theme, toggleTheme } = useTheme();
+	const navigate = useNavigate();
+	const location = useLocation();
+
+	const [isProfileOpen, setIsProfileOpen] = useState(false);
+	const [isDatabaseDropdownOpen, setIsDatabaseDropdownOpen] = useState(false);
+	const [isAdventuresDropdownOpen, setIsAdventuresDropdownOpen] = useState(false);
+	const [isToolsDropdownOpen, setIsToolsDropdownOpen] = useState(false);
+	const [isLangDropdownOpen, setIsLangDropdownOpen] = useState(false);
+	const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+	const [isThemeSettingsOpen, setIsThemeSettingsOpen] = useState(false);
+	const [isDonateOpen, setIsDonateOpen] = useState(false);
+
+	const profileMenuRef = useRef(null);
+	const databaseDropdownRef = useRef(null);
+	const adventuresDropdownRef = useRef(null);
+	const toolsDropdownRef = useRef(null);
+	const langDropdownRef = useRef(null);
+
+	const confirmLogout = () => {
+		logout();
+		setIsLogoutModalOpen(false);
+		closeAllMenus();
+		navigate("/");
+	};
+
+	const closeAllMenus = () => {
+		setIsProfileOpen(false);
+		setIsDatabaseDropdownOpen(false);
+		setIsAdventuresDropdownOpen(false);
+		setIsToolsDropdownOpen(false);
+		setIsLangDropdownOpen(false);
+	};
+
+	useEffect(() => {
+		const handleClickOutside = event => {
+			const refs = [
+				{ ref: profileMenuRef, setter: setIsProfileOpen },
+				{ ref: databaseDropdownRef, setter: setIsDatabaseDropdownOpen },
+				{ ref: adventuresDropdownRef, setter: setIsAdventuresDropdownOpen },
+				{ ref: toolsDropdownRef, setter: setIsToolsDropdownOpen },
+				{ ref: langDropdownRef, setter: setIsLangDropdownOpen },
+			];
+
+			refs.forEach(({ ref, setter }) => {
+				if (ref.current && !ref.current.contains(event.target)) {
+					setter(false);
+				}
+			});
+		};
+
+		document.addEventListener("mousedown", handleClickOutside);
+		return () => document.removeEventListener("mousedown", handleClickOutside);
+	}, []);
+
+	const navLinkClass = ({ isActive }) =>
+		`flex items-center gap-2 py-2 px-4 rounded-lg transition-all duration-200 hover:bg-nav-hover-bg hover:scale-105 text-nav-link-text relative ${
+			isActive
+				? "font-bold underline-active-center active"
+				: "underline-active-center"
+		}`;
+
+	const dropdownLinkClass =
+		"flex items-center gap-2 px-4 py-2 text-sm text-dropdown-item-text hover:bg-dropdown-item-hover-bg";
+
+	const handleNavClick = () => closeAllMenus();
+
+	return (
+		<>
+			<header
+				className='bg-header-bg text-header-text p-2 shadow-xl fixed top-0 left-0 right-0 z-[100] font-secondary hidden xl:block'
+				style={{
+					transform: isNavVisible ? 'translateY(0)' : 'translateY(-100%)',
+					transition: 'transform 0.3s ease',
+				}}
+			>
+				<div className='w-full px-6 flex justify-between items-center'>
+					<div className='flex items-center gap-8 flex-1'>
+						<NavLink
+							to='/'
+							className='flex items-center group'
+							onClick={handleNavClick}
+						>
+							<img
+								src="/favicon.ico"
+								alt='Logo'
+								className='h-10 w-auto object-contain rounded-lg transition-transform duration-300 group-hover:scale-110'
+							/>
+							<span className='ml-2 font-primary text-3xl'>POC GUIDE</span>
+						</NavLink>
+
+						<nav className='flex items-center gap-2'>
+
+							<div
+								className='relative'
+								ref={databaseDropdownRef}
+								onMouseEnter={() => setIsDatabaseDropdownOpen(true)}
+								onMouseLeave={() => setIsDatabaseDropdownOpen(false)}
+							>
+								<button className='flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-nav-hover-bg transition-all'>
+									<Package className='w-6 h-6' /> {tUI("nav.databaseTitle") || "Từ Điển"}
+									<svg
+										className={`w-4 h-4 transition-transform ${
+											isDatabaseDropdownOpen ? "rotate-180" : ""
+										}`}
+										fill='none'
+										stroke='currentColor'
+										viewBox='0 0 24 24'
+									>
+										<path
+											strokeLinecap='round'
+											strokeLinejoin='round'
+											strokeWidth={2}
+											d='M19 9l-7 7-7-7'
+										/>
+									</svg>
+								</button>
+
+								
+									{isDatabaseDropdownOpen && (
+										<div 
+											transition={{ duration: 0.2 }}
+											className='absolute z-50 left-0 top-full pt-1'
+										>
+											<div className='w-48 bg-modal-bg border border-dropdown-border rounded-lg shadow-xl py-2'>
+												<NavLink to='/champions' className={dropdownLinkClass} onClick={handleNavClick}>
+													<Swords className='w-5 h-5' /> {tUI("nav.champions")}
+												</NavLink>
+												<NavLink to='/sub-champions' className={dropdownLinkClass} onClick={handleNavClick}>
+													<Users className='w-5 h-5' /> {tUI("nav.subChampions") || "Sub-Champions"}
+												</NavLink>
+												<NavLink to='/relics' className={dropdownLinkClass} onClick={handleNavClick}>
+													<Sparkles className='w-5 h-5' /> {tUI("nav.relics")}
+												</NavLink>
+												<NavLink to='/items' className={dropdownLinkClass} onClick={handleNavClick}>
+													<Package className='w-5 h-5' /> {tUI("nav.items")}
+												</NavLink>
+												<NavLink to='/powers' className={dropdownLinkClass} onClick={handleNavClick}>
+													<Zap className='w-5 h-5' /> {tUI("nav.powers")}
+												</NavLink>
+												<NavLink to='/runes' className={dropdownLinkClass} onClick={handleNavClick}>
+													<Gem className='w-5 h-5' /> {tUI("nav.runes")}
+												</NavLink>
+												<NavLink to='/cards' className={dropdownLinkClass} onClick={handleNavClick}>
+													<BookOpen className='w-5 h-5' /> {tUI("nav.cards")}
+												</NavLink>
+												<NavLink to='/resources' className={dropdownLinkClass} onClick={handleNavClick}>
+													<Book className='w-5 h-5' /> {tUI("nav.resources")}
+												</NavLink>
+											</div>
+										</div>
+									)}
+								
+							</div>
+
+							<div
+								className='relative'
+								ref={adventuresDropdownRef}
+								onMouseEnter={() => setIsAdventuresDropdownOpen(true)}
+								onMouseLeave={() => setIsAdventuresDropdownOpen(false)}
+							>
+								<button className='flex items-center gap-2 px-4 py-2 rounded-lg hover:bg-nav-hover-bg transition-all'>
+									<Map className='w-6 h-6' /> {tUI("nav.adventuresTitle") || "Phiêu Lưu"}
+									<svg
+										className={`w-4 h-4 transition-transform ${
+											isAdventuresDropdownOpen ? "rotate-180" : ""
+										}`}
+										fill='none'
+										stroke='currentColor'
+										viewBox='0 0 24 24'
+									>
+										<path
+											strokeLinecap='round'
+											strokeLinejoin='round'
+											strokeWidth={2}
+											d='M19 9l-7 7-7-7'
+										/>
+									</svg>
+								</button>
+
+								
+									{isAdventuresDropdownOpen && (
+										<div 
+											transition={{ duration: 0.2 }}
+											className='absolute z-50 left-0 top-full pt-1'
+										>
+											<div className='w-48 bg-modal-bg border border-dropdown-border rounded-lg shadow-xl py-2'>
+												<NavLink to='/maps' className={dropdownLinkClass} onClick={handleNavClick}>
+													<Map className='w-5 h-5' /> {tUI("nav.maps")}
+												</NavLink>
+												<NavLink to='/bosses' className={dropdownLinkClass} onClick={handleNavClick}>
+													<Swords className='w-5 h-5' /> {tUI("nav.bosses")}
+												</NavLink>
+												<NavLink to='/guides' className={dropdownLinkClass} onClick={handleNavClick}>
+													<BookMarked className='w-5 h-5' /> {tUI("nav.guides")}
+												</NavLink>
+												<NavLink to='/builds' className={dropdownLinkClass} onClick={handleNavClick}>
+													<ScrollText className='w-5 h-5' /> {tUI("nav.builds")}
+												</NavLink>
+												<NavLink to='/tools/ratings' className={dropdownLinkClass} onClick={handleNavClick}>
+													<Star className='w-5 h-5' /> {tUI("nav.championRatings")}
+												</NavLink>
+												<NavLink to='/tierlist' className={dropdownLinkClass} onClick={handleNavClick}>
+													<BarChartHorizontalBig className='w-5 h-5' /> {tUI("nav.tierList")}
+												</NavLink>
+											</div>
+										</div>
+									)}
+								
+							</div>
+
+							<div
+								className='relative'
+								ref={toolsDropdownRef}
+								onMouseEnter={() => setIsToolsDropdownOpen(true)}
+								onMouseLeave={() => setIsToolsDropdownOpen(false)}
+							>
+								<button className='flex items-center gap-2 py-2 px-4 rounded-lg hover:bg-nav-hover-bg transition-all'>
+									<Wrench className='w-6 h-6' /> {tUI("nav.toolsTitle")}
+									<svg
+										className={`w-4 h-4 transition-transform ${
+											isToolsDropdownOpen ? "rotate-180" : ""
+										}`}
+										fill='none'
+										stroke='currentColor'
+										viewBox='0 0 24 24'
+									>
+										<path
+											strokeLinecap='round'
+											strokeLinejoin='round'
+											strokeWidth={2}
+											d='M19 9l-7 7-7-7'
+										/>
+									</svg>
+								</button>
+								
+									{isToolsDropdownOpen && (
+										<div 
+											transition={{ duration: 0.2 }}
+											className='absolute z-50 left-0 top-full pt-1'
+										>
+											<div className='w-48 bg-modal-bg border border-dropdown-border rounded-lg shadow-xl py-2'>
+												<NavLink to='/simulator/vaults' className={dropdownLinkClass} onClick={handleNavClick}>
+													<Gift className='w-5 h-5' /> {tUI("nav.vaultSimulator")}
+												</NavLink>
+												<NavLink to='/randomizer' className={dropdownLinkClass} onClick={handleNavClick}>
+													<LoaderPinwheel className='w-5 h-5' /> {tUI("nav.randomizer")}
+												</NavLink>
+												<NavLink to='/tools/champion-items' className={dropdownLinkClass} onClick={handleNavClick}>
+													<Package className='w-5 h-5' /> {tUI("nav.championItems") || "Item cho tướng"}
+												</NavLink>
+												<NavLink to='/introduction' className={dropdownLinkClass} onClick={handleNavClick}>
+													<BookOpen className='w-5 h-5' /> {tUI("nav.about")}
+												</NavLink>
+											</div>
+										</div>
+									)}
+								
+							</div>
+						</nav>
+					</div>
+
+					<div className='flex items-center gap-2'>
+						{/* Thanh tìm kiếm inline */}
+						<GlobalSearch />
+
+						<button 
+							onClick={() => setIsThemeSettingsOpen(true)}
+							className="p-2.5 rounded-lg hover:bg-nav-hover-bg transition-all"
+							title="Theme personalization"
+						>
+							<Palette className="w-5 h-5" />
+						</button>
+
+						<div
+							className='relative'
+							ref={langDropdownRef}
+							onMouseEnter={() => setIsLangDropdownOpen(true)}
+							onMouseLeave={() => setIsLangDropdownOpen(false)}
+						>
+							<button className='flex items-center gap-1 py-3 px-3 rounded-lg hover:bg-nav-hover-bg transition-all'>
+								<Globe className='w-5 h-5' />
+								<span className='font-bold'>
+									{language === "vi" ? "VN" : "EN"}
+								</span>
+								<svg
+									className={`w-3 h-3 transition-transform ${
+										isLangDropdownOpen ? "rotate-180" : ""
+									}`}
+									fill='none'
+									stroke='currentColor'
+									viewBox='0 0 24 24'
+								>
+									<path
+										strokeLinecap='round'
+										strokeLinejoin='round'
+										strokeWidth={2}
+										d='M19 9l-7 7-7-7'
+									/>
+								</svg>
+							</button>
+
+							
+								{isLangDropdownOpen && (
+									<div 
+										transition={{ duration: 0.2 }}
+										className='absolute z-50 right-0 top-full pt-1'
+									>
+										<div className='w-32 bg-dropdown-bg border border-dropdown-border rounded-lg shadow-xl py-2'>
+											<button
+												onClick={() => {
+													handleLanguageChange("vi");
+													closeAllMenus();
+												}}
+												className={`w-full flex items-center px-4 py-2 text-sm   hover:bg-dropdown-item-hover-bg ${
+													language === "vi"
+														? "font-bold text-dropdown-item-text"
+														: "text-dropdown-item-text"
+												}`}
+											>
+												Tiếng Việt
+											</button>
+											<button
+												onClick={() => {
+													handleLanguageChange("en");
+													closeAllMenus();
+												}}
+												className={`w-full flex items-center px-4 py-2 text-sm   hover:bg-dropdown-item-hover-bg ${
+													language === "en"
+														? "font-bold  text-dropdown-item-text"
+														: "text-dropdown-item-text"
+												}`}
+											>
+												English
+											</button>
+										</div>
+									</div>
+								)}
+							
+						</div>
+
+						{/* Nút Donate */}
+						<button 
+							onClick={() => setIsDonateOpen(true)}
+							className="p-2.5 rounded-lg hover:bg-nav-hover-bg transition-all"
+							title={tUI("nav.donateTitle")}
+						>
+							<Coffee className="w-5 h-5" />
+						</button>
+
+						{user ? (
+							<div className='relative' ref={profileMenuRef}>
+								<button
+									onClick={() => setIsProfileOpen(!isProfileOpen)}
+									className='flex items-center gap-2 py-2 px-2 lg:px-3 rounded-lg hover:bg-nav-hover-bg transition-all hover:scale-105'
+								>
+									<span className='text-sm font-medium whitespace-nowrap truncate max-w-[100px] lg:max-w-[150px] xl:max-w-[200px] text-right'>{user.name}</span>
+									<User className='h-7 w-7 xl:h-8 xl:w-8 flex-shrink-0' />
+								</button>
+								
+									{isProfileOpen && (
+										<div 
+											transition={{ duration: 0.2 }}
+											className='absolute z-50 right-0 top-full pt-1'
+										>
+											<div className='w-56 bg-dropdown-bg border border-dropdown-border rounded-lg shadow-xl py-2'>
+												<NavLink
+													to='/profile'
+													className={dropdownLinkClass}
+													onClick={handleNavClick}
+												>
+													<Settings className='w-4 h-4' /> {tUI("nav.profile")}
+												</NavLink>
+												{isAdmin && (
+													<NavLink
+														to='/admin'
+														className={`${dropdownLinkClass} font-semibold`}
+														onClick={handleNavClick}
+													>
+														<Shield className='w-4 h-4' />
+														{tUI("nav.admin")}
+													</NavLink>
+												)}
+												<button
+													onClick={() => setIsLogoutModalOpen(true)}
+													className={`${dropdownLinkClass} w-full text-left`}
+												>
+													<LogOut className='w-4 h-4' /> {tUI("nav.logout")}
+												</button>
+											</div>
+										</div>
+									)}
+								
+							</div>
+						) : (
+							<NavLink
+								to={`/auth?mode=login&redirect=${encodeURIComponent(location.pathname + location.search)}`}
+								onClick={handleNavClick}
+								className='flex items-center gap-2 py-2 px-4 rounded-lg bg-btn-primary-bg text-btn-primary-text hover:bg-btn-primary-hover-bg transition-all hover:scale-105 whitespace-nowrap flex-shrink-0'
+							>
+								<LogIn className='h-5 w-5' /> {tUI("nav.login")}
+							</NavLink>
+						)}
+					</div>
+				</div>
+			</header>
+
+			<Modal
+				isOpen={isLogoutModalOpen}
+				onClose={() => setIsLogoutModalOpen(false)}
+				title={tUI("nav.confirmLogoutTitle")}
+				maxWidth='max-w-sm'
+			>
+				<div>
+					<p className='text-text-secondary flex items-center gap-2'>
+						<LogOut className='w-5 h-5 text-red-500' />
+						{tUI("nav.confirmLogoutDesc")}
+					</p>
+					<div className='flex justify-end gap-4 mt-6'>
+						<Button variant='ghost' onClick={() => setIsLogoutModalOpen(false)}>
+							{tUI("nav.cancel")}
+						</Button>
+						<Button variant='danger' onClick={confirmLogout}>
+							{tUI("nav.logout")}
+						</Button>
+					</div>
+				</div>
+			</Modal>
+
+			<ThemeSettings 
+				isOpen={isThemeSettingsOpen} 
+				onClose={() => setIsThemeSettingsOpen(false)} 
+			/>
+
+			<DonateModal 
+				isOpen={isDonateOpen} 
+				onClose={() => setIsDonateOpen(false)} 
+			/>
+		</>
+	);
+}
+
+export default DesktopNavbar;

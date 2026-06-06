@@ -1,0 +1,258 @@
+// be/src/routes/runes.js
+import express from "express";
+import cacheManager from "../utils/cacheManager.js";
+import { getDb } from "../config/mongo.js";
+import { authenticateCognitoToken } from "../middleware/authenticate.js";
+import { removeAccents } from "../utils/vietnameseUtils.js";
+import { createAuditLog } from "../utils/auditLogger.js";
+import { getCachedRunes, invalidateRuneCache } from "../services/dataService.js";
+import kv from "../utils/redis.js";
+
+const router = express.Router();
+const RUNES_TABLE = "guidePocRunes";
+const runeCache = cacheManager.getOrCreateCache("runes", { stdTTL: 86400, checkperiod: 60 });
+
+// getCachedRunes() đã được chuyển vào dataService.js
+export { getCachedRunes } from "../services/dataService.js";
+
+/**
+ * @route   GET /api/runes/:runeCode
+ * @desc    Lấy chi tiết một ngọc (Ưu tiên RAM -> Database)
+ */
+router.get("/:runeCode", async (req, res) => {
+	const { runeCode } = req.params;
+	if (!runeCode)
+		return res.status(400).json({ error: "runeCode là bắt buộc." });
+
+	const id = runeCode.trim();
+	const CACHE_KEY = `rune_detail_${id}`;
+
+	// 1. Kiểm tra Cache RAM trước
+	const cachedRune = await runeCache.get(CACHE_KEY);
+	if (cachedRune) return res.json(cachedRune);
+
+	try {
+		// 2. Truy vấn MongoDB nếu Cache miss
+		const db = getDb();
+		const Item = await db.collection(RUNES_TABLE).findOne({ runeCode: id });
+		if (!Item)
+			return res.status(404).json({ error: `Không tìm thấy ngọc: ${id}` });
+
+		const runeData = Item;
+
+		// 3. Lưu vào Cache
+		await runeCache.set(CACHE_KEY, runeData);
+
+		res.json(runeData);
+	} catch (error) {
+		console.error(`Lỗi khi lấy chi tiết ngọc ${id}:`, error);
+		res.status(500).json({ error: "Lỗi hệ thống khi truy vấn dữ liệu." });
+	}
+});
+
+/**
+ * @route   GET /api/runes
+ * @desc    Lấy danh sách Ngọc (Phân trang, Lọc, Cache)
+ */
+router.get("/", async (req, res) => {
+	try {
+		const queryParamsStr = new URLSearchParams(req.query).toString();
+		const cacheKey = `api:runes:${queryParamsStr}`;
+
+		if (kv) {
+			const cachedData = await kv.get(cacheKey);
+			if (cachedData) {
+				res.setHeader("Content-Type", "application/json");
+				return res.send(cachedData);
+			}
+		}
+
+		const {
+			page = 1,
+			limit = 24,
+			searchTerm = "",
+			rarities = "",
+			sort = "name-asc",
+		} = req.query;
+
+		const pageSize = parseInt(limit);
+		const currentPage = parseInt(page);
+
+		const allRunes = await getCachedRunes();
+
+		const availableFilters = {
+			rarities: [...new Set(allRunes.map(r => r.rarity))]
+				.filter(Boolean)
+				.sort(),
+		};
+
+		let filtered = [...allRunes];
+
+		if (searchTerm) {
+			const searchKey = removeAccents(searchTerm.toLowerCase());
+			filtered = filtered.filter(r => {
+				const nameVn = removeAccents(r.name || "");
+				const descVn = removeAccents(r.description || "");
+				const nameEn = removeAccents(r.translations?.en?.name || "");
+				const descEn = removeAccents(r.translations?.en?.description || "");
+				const runeCode = (r.runeCode || r.id || "").toLowerCase();
+
+				return (
+					nameVn.includes(searchKey) ||
+					descVn.includes(searchKey) ||
+					nameEn.includes(searchKey) ||
+					descEn.includes(searchKey) ||
+					runeCode.includes(searchKey)
+				);
+			});
+		}
+
+		if (rarities) {
+			const rList = rarities.split(",");
+			filtered = filtered.filter(r => rList.includes(r.rarity));
+		}
+
+		const [field, order] = sort.split("-");
+		filtered.sort((a, b) => {
+			let vA = a[field] ?? "";
+			let vB = b[field] ?? "";
+			return order === "asc"
+				? vA.toString().localeCompare(vB.toString())
+				: vB.toString().localeCompare(vA.toString());
+		});
+
+		const totalItems = filtered.length;
+		const totalPages = Math.ceil(totalItems / pageSize);
+		const paginatedItems = filtered.slice(
+			(currentPage - 1) * pageSize,
+			currentPage * pageSize,
+		);
+
+		const responseData = {
+			items: paginatedItems,
+			pagination: { totalItems, totalPages, currentPage, pageSize },
+			availableFilters,
+		};
+
+		if (kv) {
+			await kv.setex(cacheKey, 300, JSON.stringify(responseData));
+		}
+
+		res.json(responseData);
+	} catch (error) {
+		console.error("Lỗi API Runes:", error);
+		res.status(500).json({ error: "Không thể lấy danh sách ngọc." });
+	}
+});
+
+/**
+ * @route   POST /api/runes/resolve
+ * @desc    Lấy chi tiết danh sách Ngọc từ mảng IDs
+ */
+router.post("/resolve", async (req, res) => {
+	const { ids } = req.body;
+	if (!Array.isArray(ids))
+		return res.status(400).json({ error: "ids must be an array" });
+
+	try {
+		const allRunes = await getCachedRunes();
+		const result = allRunes.filter(r => ids.includes(r.runeCode));
+		res.json(result);
+	} catch (error) {
+		res.status(500).json({ error: "Lỗi truy vấn Runes" });
+	}
+});
+
+/**
+ * @route   PUT /api/runes
+ * @desc    Tạo mới hoặc Cập nhật ngọc (Kiểm tra tồn tại ID)
+ */
+router.put("/", authenticateCognitoToken, async (req, res) => {
+	const runeData = req.body;
+	const { runeCode, isNew } = runeData;
+
+	if (!runeCode)
+		return res.status(400).json({ error: "Mã ngọc (runeCode) là bắt buộc." });
+
+	try {
+		const db = getDb();
+		const Item = await db.collection(RUNES_TABLE).findOne({ runeCode: runeCode.trim() });
+		const exists = !!Item;
+
+		if (isNew && exists) {
+			return res.status(409).json({
+				error: `Mã ngọc "${runeCode}" đã tồn tại. Không thể tạo mới trùng mã.`,
+			});
+		}
+
+		if (!isNew && !exists) {
+			return res.status(404).json({
+				error: `Mã ngọc "${runeCode}" không tồn tại. Không thể cập nhật.`,
+			});
+		}
+
+		const dataToSave = { ...runeData };
+		delete dataToSave.isNew;
+		delete dataToSave._id;
+
+		await db.collection(RUNES_TABLE).replaceOne(
+			{ runeCode: dataToSave.runeCode },
+			dataToSave,
+			{ upsert: true }
+		);
+		
+		// Ghi log thay đổi
+		await createAuditLog({
+			action: isNew ? "CREATE" : "UPDATE",
+			entityType: "rune",
+			entityId: runeCode,
+			entityName: dataToSave.name,
+			oldData: Item ? Item : null,
+			newData: dataToSave,
+			user: req.user
+		});
+
+		await invalidateRuneCache(runeCode);
+
+		res.status(200).json({
+			message: isNew ? "Tạo mới thành công" : "Cập nhật thành công",
+			rune: dataToSave,
+		});
+	} catch (error) {
+		console.error("Lỗi khi lưu ngọc:", error);
+		res.status(500).json({ error: "Lỗi hệ thống khi xử lý dữ liệu." });
+	}
+});
+
+/**
+ * @route   DELETE /api/runes/:runeCode
+ * @desc    Xóa ngọc
+ */
+router.delete("/:runeCode", authenticateCognitoToken, async (req, res) => {
+	const { runeCode } = req.params;
+	try {
+		const db = getDb();
+		const Item = await db.collection(RUNES_TABLE).findOne({ runeCode });
+		const oldData = Item ? Item : null;
+
+		await db.collection(RUNES_TABLE).deleteOne({ runeCode });
+
+		// Ghi log thay đổi
+		await createAuditLog({
+			action: "DELETE",
+			entityType: "rune",
+			entityId: runeCode,
+			entityName: oldData?.name || runeCode,
+			oldData: oldData,
+			newData: null,
+			user: req.user
+		});
+		await invalidateRuneCache(runeCode);
+		res.status(200).json({ message: "Đã xóa ngọc thành công." });
+	} catch (error) {
+		console.error("Lỗi khi xóa ngọc:", error);
+		res.status(500).json({ error: "Lỗi hệ thống khi xóa dữ liệu." });
+	}
+});
+
+export default router;

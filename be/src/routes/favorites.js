@@ -1,0 +1,275 @@
+// src/routes/favorites.js
+import express from "express";
+import { getDb } from "../config/mongo.js";
+import { authenticateCognitoToken } from "../middleware/authenticate.js";
+import { normalizeDisplay } from "../utils/dbHelpers.js";
+import { invalidatePublicBuildsCache } from "../utils/buildCache.js";
+import { removeAccents } from "../utils/vietnameseUtils.js";
+import { getUserNames } from "../utils/userCache.js";
+
+const router = express.Router();
+const BUILDS_TABLE = "guidePocBuilds";
+const FAVORITES_TABLE = "guidePocFavoriteBuilds";
+
+/**
+ * 1. LẤY DANH SÁCH FAVORITE (Có Phân trang, Lọc, Tìm kiếm)
+ */
+router.get("/favorites", authenticateCognitoToken, async (req, res) => {
+	const userSub = req.user.sub;
+	try {
+		const {
+			page = 1,
+			limit = 24,
+			searchTerm = "",
+			championNames = "",
+			sort = "favAt-desc",
+		} = req.query;
+
+		const pageSize = parseInt(limit);
+		const currentPage = parseInt(page);
+
+		const db = getDb();
+		const favItems = await db.collection(FAVORITES_TABLE)
+			.find({ user_sub: userSub })
+			.sort({ createdAt: -1 })
+			.toArray();
+
+		if (!favItems || favItems.length === 0) {
+			return res.json({
+				items: [],
+				pagination: { totalItems: 0, totalPages: 0, currentPage, pageSize },
+				availableFilters: { championNames: [] },
+			});
+		}
+
+		// Lấy chi tiết build từ BUILDS_TABLE
+		const allBuilds = await Promise.all(
+			favItems.map(async fItem => {
+				const favData = fItem;
+				const Item = await db.collection(BUILDS_TABLE).findOne({ id: favData.id });
+				if (!Item) return null;
+
+				const build = normalizeDisplay(Item);
+				// Gắn thêm ngày Favorite để sắp xếp
+				return { ...build, favAt: favData.createdAt };
+			}),
+		);
+
+		let filtered = allBuilds.filter(Boolean);
+
+		// A. Trích xuất bộ lọc động
+		const availableFilters = {
+			championNames: [...new Set(filtered.map(b => b.championName))].sort(),
+		};
+
+		// B. Tìm kiếm
+		if (searchTerm) {
+			const searchKey = removeAccents(searchTerm);
+			filtered = filtered.filter(
+				b =>
+					removeAccents(b.championName || "").includes(searchKey) ||
+					removeAccents(b.description || "").includes(searchKey),
+			);
+		}
+
+		// C. Lọc theo tướng
+		if (championNames) {
+			const cList = championNames.split(",");
+			filtered = filtered.filter(b => cList.includes(b.championName));
+		}
+
+		// D. Sắp xếp
+		const [field, order] = sort.split("-");
+		filtered.sort((a, b) => {
+			let vA = a[field] ?? "";
+			let vB = b[field] ?? "";
+			if (field === "favAt" || field === "createdAt") {
+				return order === "asc"
+					? new Date(vA) - new Date(vB)
+					: new Date(vB) - new Date(vA);
+			}
+			return order === "asc"
+				? vA.toString().localeCompare(vB.toString())
+				: vB.toString().localeCompare(vA.toString());
+		});
+
+		// E. Phân trang
+		const totalItems = filtered.length;
+		const totalPages = Math.ceil(totalItems / pageSize);
+		const paginatedItems = filtered.slice(
+			(currentPage - 1) * pageSize,
+			currentPage * pageSize,
+		);
+
+		// F. Làm giàu tên hiển thị
+		if (paginatedItems.length > 0) {
+			const usernames = [...new Set(paginatedItems.map(i => i.creator))];
+			const userMap = await getUserNames(usernames);
+			paginatedItems.forEach(item => {
+				item.creatorName = userMap[item.creator] || item.creator;
+			});
+		}
+
+		res.json({
+			items: paginatedItems,
+			pagination: { totalItems, totalPages, currentPage, pageSize },
+			availableFilters,
+		});
+	} catch (error) {
+		console.error("Error fetching favorites:", error);
+		res.status(500).json({ error: "Could not fetch favorites" });
+	}
+});
+
+/**
+ * 2. TOGGLE FAVORITE
+ */
+router.patch("/:id/favorite", authenticateCognitoToken, async (req, res) => {
+	const { id: buildId } = req.params;
+	const userSub = req.user.sub;
+	const username = req.user.user_metadata?.user_name || req.user.user_metadata?.name || req.user.email?.split('@')[0] || req.user["cognito:username"] || "Anonymous";
+
+	try {
+		const db = getDb();
+		const buildItem = await db.collection(BUILDS_TABLE).findOne({ id: buildId });
+		if (!buildItem) return res.status(404).json({ error: "Build not found" });
+
+		const build = normalizeDisplay(buildItem);
+
+		// Kiểm tra trạng thái hiện tại
+		const Items = await db.collection(FAVORITES_TABLE).find({
+			id: buildId,
+			user_sub: userSub,
+		}).toArray();
+
+		let isFavorited = false;
+		if (Items?.length > 0) {
+			await db.collection(FAVORITES_TABLE).deleteOne({
+				id: buildId,
+				user_sub: userSub,
+			});
+		} else {
+			isFavorited = true;
+			await db.collection(FAVORITES_TABLE).insertOne({
+				id: buildId,
+				user_sub: userSub,
+				username,
+				championName: build.championName,
+				creatorName: build.creatorName || "Vô Danh",
+				createdAt: new Date().toISOString(),
+			});
+		}
+
+		// Invalidate cache công khai để cập nhật số lượng yêu thích nếu cần
+		if (build.display === true || build.display === "true") {
+			await invalidatePublicBuildsCache();
+		}
+
+		res.json({
+			...build,
+			isFavorited,
+			message: isFavorited ? "Favorited" : "Unfavorited",
+		});
+	} catch (error) {
+		console.error("Toggle favorite error:", error);
+		res.status(500).json({ error: "Could not toggle favorite" });
+	}
+});
+
+/**
+ * 3. CHECK STATUS (Single)
+ */
+router.get(
+	"/:id/favorite/status",
+	authenticateCognitoToken,
+	async (req, res) => {
+		const { id: buildId } = req.params;
+		const userSub = req.user.sub;
+		try {
+			const db = getDb();
+			const Count = await db.collection(FAVORITES_TABLE).countDocuments({
+				id: buildId,
+				user_sub: userSub,
+			});
+			res.json({ isFavorited: Count > 0 });
+		} catch (error) {
+			res.status(500).json({ error: "Error checking status" });
+		}
+	},
+);
+
+/**
+ * 4. COUNT (Single)
+ */
+router.get("/:id/favorite/count", async (req, res) => {
+	const { id: buildId } = req.params;
+	try {
+		const db = getDb();
+		const Count = await db.collection(FAVORITES_TABLE).countDocuments({ id: buildId });
+		res.json({ count: Count || 0 });
+	} catch (error) {
+		res.json({ count: 0 });
+	}
+});
+
+/**
+ * 5. BATCH STATUS
+ */
+router.get("/favorites/batch", authenticateCognitoToken, async (req, res) => {
+	const { ids } = req.query;
+	const userSub = req.user.sub;
+
+	if (!ids || !userSub) return res.json({});
+	const buildIds = ids.split(",").filter(Boolean);
+	if (buildIds.length === 0) return res.json({});
+
+	try {
+		const db = getDb();
+		const Items = await db.collection(FAVORITES_TABLE).find({
+			id: { $in: buildIds },
+			user_sub: userSub,
+		}).project({ id: 1 }).toArray();
+
+		const favoritedSet = new Set(Items.map(item => item.id));
+		const statusMap = Object.fromEntries(
+			buildIds.map(id => [id, favoritedSet.has(id)])
+		);
+
+		res.setHeader("Cache-Control", "no-store");
+		res.json(statusMap);
+	} catch (error) {
+		console.error("Batch error:", error);
+		res.status(500).json({ error: "Batch failed" });
+	}
+});
+
+/**
+ * 6. BATCH COUNT
+ */
+router.get("/favorites/count/batch", async (req, res) => {
+	const { ids } = req.query;
+	if (!ids) return res.json({});
+
+	const buildIds = ids.split(",").filter(Boolean);
+	if (buildIds.length === 0) return res.json({});
+
+	try {
+		const db = getDb();
+		const results = await db.collection(FAVORITES_TABLE).aggregate([
+			{ $match: { id: { $in: buildIds } } },
+			{ $group: { _id: "$id", count: { $sum: 1 } } }
+		]).toArray();
+
+		const countMap = Object.fromEntries(buildIds.map(id => [id, 0]));
+		results.forEach(r => {
+			countMap[r._id] = r.count;
+		});
+
+		res.json(countMap);
+	} catch (error) {
+		console.error("Batch count error:", error);
+		res.status(500).json({ error: "Batch count failed" });
+	}
+});
+
+export default router;

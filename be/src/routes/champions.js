@@ -1,0 +1,607 @@
+// src/routes/champions.js
+import express from "express";
+import cacheManager from "../utils/cacheManager.js";
+import { getDb } from "../config/mongo.js";
+import { authenticateCognitoToken } from "../middleware/authenticate.js";
+import { requireAdmin } from "../middleware/requireAdmin.js";
+import { removeAccents } from "../utils/vietnameseUtils.js";
+import { supabase } from "../config/supabase.js";
+import { createAuditLog } from "../utils/auditLogger.js";
+import {
+	getCachedChampions,
+	batchFetchByIds,
+	invalidateChampionCache,
+} from "../services/dataService.js";
+import kv from "../utils/redis.js";
+
+const router = express.Router();
+const CHAMPIONS_TABLE = "guidePocChampionList";
+const championCache = cacheManager.getOrCreateCache("champions", { stdTTL: 1800, checkperiod: 60 });
+
+// getCachedChampions() đã được chuyển vào dataService.js
+export { getCachedChampions } from "../services/dataService.js";
+
+/**
+ * @route   GET /api/champions
+ * @desc    Lấy danh sách tướng với bộ lọc động và phân trang an toàn
+ */
+router.get("/", async (req, res) => {
+	try {
+		const queryParamsStr = new URLSearchParams(req.query).toString();
+		const cacheKey = `api:champions:${queryParamsStr}`;
+
+		if (kv) {
+			const cachedData = await kv.get(cacheKey);
+			if (cachedData) {
+				res.setHeader("Content-Type", "application/json");
+				return res.send(cachedData);
+			}
+		}
+
+		const {
+			page = 1,
+			limit = 24,
+			searchTerm = "",
+			regions = "",
+			costs = "",
+			tags = "",
+			maxStars = "",
+			sort = "name-asc",
+		} = req.query;
+
+		const pageSize = parseInt(limit);
+		const currentPage = parseInt(page);
+
+		// 1. Lấy toàn bộ danh sách từ Cache (hoặc DB)
+		const allChampions = await getCachedChampions();
+
+		// 2. TRÍCH XUẤT BỘ LỌC ĐỘNG (Dynamic Filters) - Đã đổi thành tags
+		const availableFilters = {
+			tags: [...new Set(allChampions.flatMap(c => c.tags || []))].sort(),
+			regions: [...new Set(allChampions.flatMap(c => c.regions || []))].sort(),
+			costs: [...new Set(allChampions.map(c => Number(c.cost)))]
+				.filter(Boolean)
+				.sort((a, b) => a - b),
+			maxStars: [...new Set(allChampions.map(c => Number(c.maxStar)))]
+				.filter(Boolean)
+				.sort((a, b) => a - b),
+		};
+
+		// 3. THỰC HIỆN LỌC (Filtering)
+		let filtered = [...allChampions];
+
+		if (searchTerm) {
+			const searchKey = removeAccents(searchTerm.toLowerCase());
+			filtered = filtered.filter(c => {
+				const nameVn = removeAccents(c.name || "");
+				const nameEn = removeAccents(c.translations?.en?.name || "");
+				const championID = (c.championID || "").toLowerCase();
+
+				return nameVn.includes(searchKey) || nameEn.includes(searchKey) || championID.includes(searchKey);
+			});
+		}
+
+		if (regions) {
+			const rList = regions.split(",");
+			if (!rList.some(r => r.toUpperCase() === "ALL")) {
+				filtered = filtered.filter(c => c.regions?.some(r => rList.includes(r)));
+			}
+		}
+
+		if (costs) {
+			const cList = costs.split(",").map(Number);
+			filtered = filtered.filter(c => cList.includes(Number(c.cost)));
+		}
+
+		if (tags) {
+			const tList = tags.split(",");
+			filtered = filtered.filter(c => c.tags?.some(t => tList.includes(t)));
+		}
+
+		if (maxStars) {
+			const sList = maxStars.split(",").map(Number);
+			filtered = filtered.filter(c => sList.includes(Number(c.maxStar)));
+		}
+
+		// 4. SẮP XẾP (Sorting)
+		const [field, order] = sort.split("-");
+		filtered.sort((a, b) => {
+			let vA = a[field] ?? "";
+			let vB = b[field] ?? "";
+			if (typeof vA === "string") {
+				return order === "asc" ? vA.localeCompare(vB) : vB.localeCompare(vA);
+			}
+			return order === "asc" ? vA - vB : vB - vA;
+		});
+
+		// 5. PHÂN TRANG (Pagination)
+		const totalItems = filtered.length;
+		let paginatedItems;
+
+		if (pageSize < 0) {
+			paginatedItems = filtered;
+		} else {
+			paginatedItems = filtered.slice(
+				(currentPage - 1) * pageSize,
+				currentPage * pageSize,
+			);
+		}
+
+		const totalPages = pageSize > 0 ? Math.ceil(totalItems / pageSize) : 1;
+
+		const responseData = {
+			items: paginatedItems,
+			pagination: {
+				totalItems,
+				totalPages,
+				currentPage,
+				pageSize: pageSize < 0 ? totalItems : pageSize,
+			},
+			availableFilters,
+		};
+
+		if (kv) {
+			await kv.setex(cacheKey, 300, JSON.stringify(responseData));
+		}
+
+		res.json(responseData);
+	} catch (error) {
+		console.error("Lỗi Backend:", error);
+		res.status(500).json({ error: "Lỗi hệ thống." });
+	}
+});
+
+/**
+ * @route   GET /api/champions/search?name=...
+ * @desc    Tìm tướng theo tên (exact match)
+ */
+router.get("/search", async (req, res) => {
+	const { name } = req.query;
+
+	if (!name || typeof name !== "string" || name.trim().length < 1) {
+		return res.status(400).json({ error: "Tham số 'name' là bắt buộc." });
+	}
+
+	const searchName = name.trim();
+
+	try {
+		const allChampions = await getCachedChampions();
+		const searchTerm = searchName.toLowerCase();
+
+		const champions = allChampions.filter(c => 
+			(c.name && c.name.toLowerCase() === searchTerm) ||
+			(c.translations?.en?.name && c.translations.en.name.toLowerCase() === searchTerm)
+		);
+
+		res.json({ items: champions });
+	} catch (error) {
+		console.error("Lỗi tìm kiếm tướng theo tên:", error);
+		res.status(500).json({ error: "Không thể tìm kiếm tướng." });
+	}
+});
+
+/**
+ * @route   POST /api/champions/resolve
+ * @desc    Lấy thông tin chi tiết của một danh sách các tướng dựa trên ID (hoặc tên)
+ */
+router.post("/resolve", async (req, res) => {
+	try {
+		const { ids } = req.body;
+		if (!Array.isArray(ids) || ids.length === 0) {
+			return res.json([]); // Trả về mảng rỗng nếu không có id nào
+		}
+
+		// Tận dụng cache có sẵn để tìm kiếm siêu tốc độ mà không cần query DB nhiều lần
+		const allChampions = await getCachedChampions();
+
+		// Map qua danh sách ids được yêu cầu từ Frontend
+		const resolvedChampions = ids
+			.map(id => {
+				// Tìm khớp theo championID hoặc name (vì đôi khi requirement lưu theo tên)
+				const found = allChampions.find(
+					c => c.championID === id || c.name === id,
+				);
+				return found || null;
+			})
+			.filter(Boolean); // Lọc bỏ các kết quả null nếu không tìm thấy
+
+		res.json(resolvedChampions);
+	} catch (error) {
+		console.error("Lỗi khi resolve champions:", error);
+		res.status(500).json({ error: "Lỗi hệ thống khi resolve tướng." });
+	}
+});
+
+/**
+ * @route   GET /api/champions/:championID/full
+ * @desc    Tối ưu hóa: Lấy toàn bộ dữ liệu cần thiết cho trang chi tiết tướng trong 1 nốt nhạc
+ */
+router.get("/:championID/full", async (req, res) => {
+	const { championID } = req.params;
+	if (!championID) return res.status(400).json({ error: "championID là bắt buộc." });
+
+	try {
+		// 1. Fetch dữ liệu cơ bản (Tướng + Chòm sao) song song
+		const db = getDb();
+		const [champion, constellation] = await Promise.all([
+			db.collection(CHAMPIONS_TABLE).findOne({ championID }),
+			db.collection("guidePocChampionConstellation").findOne({ constellationID: championID })
+		]);
+
+		if (!champion) return res.status(404).json({ error: "Không tìm thấy tướng." });
+		
+		delete champion._id;
+		if (constellation) delete constellation._id;
+
+		// 2. Thu thập tất cả ID cần resolve (Hỗ trợ cả định dạng String cũ và Object mới)
+		const powerIds = new Set([
+			"P01114",
+			...(champion.adventurePowerIds || champion.adventurePowers || []),
+			...(champion.powerStarIds || []),
+			...(constellation?.nodes?.map(n => n.powerCode).filter(Boolean) || [])
+		]);
+		const extractRelicCodes = (sets) => {
+			if (!Array.isArray(sets)) return [];
+			return sets.flatMap(s => {
+				if (Array.isArray(s)) return s;
+				if (typeof s === "object" && s !== null) return s.items || [];
+				return [];
+			});
+		};
+		const relicIds = new Set(extractRelicCodes(champion.relicSets));
+		
+		const extractItemCodes = (cards) => {
+			if (!Array.isArray(cards)) return [];
+			return cards.flatMap(c => {
+				const itemCodes = (typeof c === "object" && c !== null) ? (c.itemCodes || []) : [];
+				return itemCodes.map(i => typeof i === "string" ? i : i.itemCode);
+			});
+		};
+
+		const itemIds = new Set([
+			...(champion.itemIds || champion.defaultItems || []),
+			...extractItemCodes(champion.startingDeck?.baseCards),
+			...extractItemCodes(champion.startingDeck?.referenceCards)
+		]);
+
+		const extractCardCodes = (cards) => {
+			if (!Array.isArray(cards)) return [];
+			return cards.map(c => typeof c === "string" ? c : c.cardCode).filter(Boolean);
+		};
+
+		const runeIds = new Set(champion.runeIds || champion.rune || []);
+		const cardIds = new Set([
+			...extractCardCodes(champion.startingDeck?.baseCards),
+			...extractCardCodes(champion.startingDeck?.referenceCards)
+		]);
+		const bonusStarIds = new Set(constellation?.nodes?.map(n => n.bonusStarID).filter(Boolean) || []);
+
+		// 3. Fetch tất cả dữ liệu liên quan song song (dùng batchFetchByIds từ DataService)
+		const [powers, relics, items, runes, cards, bonusStars, allRatings] = await Promise.all([
+			batchFetchByIds("guidePocPowers", "powerCode", Array.from(powerIds)),
+			batchFetchByIds("guidePocRelics", "relicCode", Array.from(relicIds)),
+			batchFetchByIds("guidePocItems", "itemCode", Array.from(itemIds)),
+			batchFetchByIds("guidePocRunes", "runeCode", Array.from(runeIds)),
+			batchFetchByIds("guidePocCardList", "cardCode", Array.from(cardIds)),
+			batchFetchByIds("guidePocBonusStar", "bonusStarID", Array.from(bonusStarIds)),
+			db.collection("guidePocPlayStyleRating").find({ championID }).toArray()
+		]);
+
+		// 4. Xử lý Ratings (Cộng đồng + Cá nhân)
+		const ratingsList = allRatings || [];
+		let personalRating = null;
+		
+		// Check token nếu có để lấy rating cá nhân
+		const authHeader = req.headers.authorization;
+		if (authHeader && authHeader.startsWith("Bearer ")) {
+			const token = authHeader.split(" ")[1];
+			try {
+				const { data } = await supabase.auth.getUser(token);
+				if (data && data.user) {
+					personalRating = ratingsList.find(r => r.userID === data.user.id || r.sub === data.user.id);
+				}
+			} catch (e) {
+				// Token invalid, bỏ qua personal rating
+			}
+		}
+
+		if (ratingsList.length > 0) {
+			const sum = { damage: 0, defense: 0, speed: 0, consistency: 0, synergy: 0, independence: 0 };
+			ratingsList.forEach(r => {
+				Object.keys(sum).forEach(k => sum[k] += r.ratings[k] || 0);
+			});
+			const count = ratingsList.length;
+			const adminRatings = champion.ratings || { damage: 5, defense: 5, speed: 5, consistency: 5, synergy: 5, independence: 5 };
+			
+			champion.communityRatings = {
+				damage: parseFloat(((adminRatings.damage + sum.damage) / (count + 1)).toFixed(1)),
+				defense: parseFloat(((adminRatings.defense + sum.defense) / (count + 1)).toFixed(1)),
+				speed: parseFloat(((adminRatings.speed + sum.speed) / (count + 1)).toFixed(1)),
+				consistency: parseFloat(((adminRatings.consistency + sum.consistency) / (count + 1)).toFixed(1)),
+				synergy: parseFloat(((adminRatings.synergy + sum.synergy) / (count + 1)).toFixed(1)),
+				independence: parseFloat(((adminRatings.independence + sum.independence) / (count + 1)).toFixed(1)),
+				count: count + 1,
+				communityOnlyAvg: {
+					damage: parseFloat((sum.damage / count).toFixed(1)),
+					defense: parseFloat((sum.defense / count).toFixed(1)),
+					speed: parseFloat((sum.speed / count).toFixed(1)),
+					consistency: parseFloat((sum.consistency / count).toFixed(1)),
+					synergy: parseFloat((sum.synergy / count).toFixed(1)),
+					independence: parseFloat((sum.independence / count).toFixed(1)),
+					userCount: count
+				}
+			};
+		}
+
+		// 5. Tìm tướng gợi ý (Cùng khu vực hoặc ngẫu nhiên)
+		const allChampions = await getCachedChampions();
+		const otherChampions = allChampions.filter(c => c.championID !== championID);
+		
+		// Ưu tiên cùng khu vực
+		const sameRegion = otherChampions.filter(c => 
+			c.regions?.some(r => champion.regions?.includes(r))
+		);
+		const remaining = otherChampions.filter(c => !sameRegion.includes(c));
+		const suggestedChampions = [...sameRegion, ...remaining].slice(0, 4);
+
+		res.json({
+			champion,
+			constellation,
+			resolvedData: {
+				powers,
+				relics,
+				items,
+				runes,
+				cards,
+				bonusStars
+			},
+			suggestedChampions,
+			allRatings: ratingsList,
+			personalRating
+		});
+
+	} catch (error) {
+		console.error("Lỗi Full Champion Resolve:", error);
+		res.status(500).json({ error: "Lỗi hệ thống khi tổng hợp dữ liệu." });
+	}
+});
+
+/**
+ * @route   GET /api/champions/:championID
+ * @desc    Lấy chi tiết một tướng
+ */
+router.get("/:championID", async (req, res) => {
+	const { championID } = req.params;
+
+	if (!championID) {
+		return res.status(400).json({ error: "championID là bắt buộc." });
+	}
+
+	const CACHE_KEY = `champion_detail_${championID}`;
+
+	try {
+		const cachedChampion = await championCache.get(CACHE_KEY);
+		if (cachedChampion) {
+			return res.json(cachedChampion);
+		}
+
+		const db = getDb();
+		const Item = await db.collection(CHAMPIONS_TABLE).findOne({ championID });
+
+		if (!Item) {
+			return res.status(404).json({ error: "Không tìm thấy tướng yêu cầu." });
+		}
+
+		const championData = Item;
+		delete championData._id;
+
+		// Thêm phần tính toán điểm trung bình từ cộng đồng
+		try {
+			const rItems = await db.collection("guidePocPlayStyleRating").find({ championID }).toArray();
+			const allRatings = rItems || [];
+
+			if (allRatings.length > 0) {
+				const sum = {
+					damage: 0,
+					defense: 0,
+					speed: 0,
+					consistency: 0,
+					synergy: 0,
+					independence: 0,
+				};
+				allRatings.forEach(r => {
+					sum.damage += r.ratings.damage || 0;
+					sum.defense += r.ratings.defense || 0;
+					sum.speed += r.ratings.speed || 0;
+					sum.consistency += r.ratings.consistency || 0;
+					sum.synergy += r.ratings.synergy || 0;
+					sum.independence += r.ratings.independence || 0;
+				});
+
+				const userCount = allRatings.length;
+				const totalCount = userCount + 1;
+
+				// Lấy điểm Admin làm gốc (coi như 1 lượt đánh giá)
+				const adminRatings = championData.ratings || {
+					damage: 5, defense: 5, speed: 5, consistency: 5, synergy: 5, independence: 5
+				};
+
+				// Tính điểm kết hợp dân chủ: (Admin + Tổng Cộng đồng) / (1 + Count)
+				championData.communityRatings = {
+					damage: parseFloat(((adminRatings.damage + sum.damage) / totalCount).toFixed(1)),
+					defense: parseFloat(((adminRatings.defense + sum.defense) / totalCount).toFixed(1)),
+					speed: parseFloat(((adminRatings.speed + sum.speed) / totalCount).toFixed(1)),
+					consistency: parseFloat(((adminRatings.consistency + sum.consistency) / totalCount).toFixed(1)),
+					synergy: parseFloat(((adminRatings.synergy + sum.synergy) / totalCount).toFixed(1)),
+					independence: parseFloat(((adminRatings.independence + sum.independence) / totalCount).toFixed(1)),
+					count: totalCount,
+					communityOnlyAvg: {
+						damage: parseFloat((sum.damage / userCount).toFixed(1)),
+						defense: parseFloat((sum.defense / userCount).toFixed(1)),
+						speed: parseFloat((sum.speed / userCount).toFixed(1)),
+						consistency: parseFloat((sum.consistency / userCount).toFixed(1)),
+						synergy: parseFloat((sum.synergy / userCount).toFixed(1)),
+						independence: parseFloat((sum.independence / userCount).toFixed(1)),
+						userCount: userCount
+					}
+				};
+				
+				// Frontend (Public) sẽ dùng communityRatings này làm bộ chỉ số hiển thị chính.
+				// Admin vẫn thấy điểm gốc trong championData.ratings.
+			} else {
+				championData.communityRatings = null;
+			}
+		} catch (rError) {
+			console.error("Lỗi khi tính điểm cộng đồng (Chi tiết):", rError);
+			championData.communityRatings = null;
+		}
+
+		await championCache.set(CACHE_KEY, championData);
+		res.json(championData);
+	} catch (error) {
+		console.error("Lỗi khi lấy chi tiết tướng:", error);
+		res.status(500).json({ error: "Lỗi hệ thống khi truy vấn dữ liệu." });
+	}
+});
+
+/**
+ * @route   PUT /api/champions
+ * @desc    Tạo mới hoặc cập nhật một tướng
+ */
+router.put("/", authenticateCognitoToken, requireAdmin, async (req, res) => {
+	const rawData = req.body;
+
+	if (!rawData.championID || !rawData.name?.trim()) {
+		return res.status(400).json({ error: "championID và name là bắt buộc." });
+	}
+
+	const championID = rawData.championID.trim();
+
+	if (championID.length < 2 || championID.length > 50) {
+		return res.status(400).json({ error: "championID phải từ 2-50 ký tự." });
+	}
+	if (!/^[A-Za-z0-9_-]+$/.test(championID)) {
+		return res.status(400).json({
+			error: "championID chỉ được chứa chữ cái, số, gạch dưới và gạch ngang.",
+		});
+	}
+
+	const maxStar = Number(rawData.maxStar) || 7;
+	if (!Number.isInteger(maxStar) || maxStar < 1 || maxStar > 7) {
+		return res.status(400).json({ error: "maxStar phải là số từ 1-7." });
+	}
+
+	const { isNew, communityRatings, _id, ...dataToSave } = rawData;
+
+	const cleanData = {
+		...dataToSave,
+		championID,
+		name: rawData.name.trim(),
+		maxStar,
+	};
+
+	try {
+		const db = getDb();
+		const Item = await db.collection(CHAMPIONS_TABLE).findOne({ championID });
+
+		if (isNew === true) {
+			if (Item) {
+				return res.status(400).json({ error: "Tướng với ID này đã tồn tại." });
+			}
+		} else {
+			if (!Item) {
+				return res
+					.status(404)
+					.json({ error: "Tướng không tồn tại để cập nhật." });
+			}
+		}
+
+		await db.collection(CHAMPIONS_TABLE).updateOne(
+			{ championID },
+			{ $set: cleanData },
+			{ upsert: true }
+		);
+		
+		// Ghi log thay đổi
+		await createAuditLog({
+			action: isNew ? "CREATE" : "UPDATE",
+			entityType: "champion",
+			entityId: championID,
+			entityName: cleanData.name,
+			oldData: Item ? Item : null,
+			newData: cleanData,
+			user: req.user
+		});
+		
+		// Xóa cache qua DataService
+		await invalidateChampionCache(championID);
+
+		res.json({
+			message: isNew
+				? "Tạo tướng mới thành công."
+				: "Cập nhật tướng thành công.",
+			champion: cleanData,
+		});
+	} catch (error) {
+		if (error.name === "ConditionalCheckFailedException") {
+			return res.status(400).json({ error: "Tướng đã tồn tại." });
+		}
+		console.error("Lỗi khi lưu dữ liệu tướng:", error);
+		res.status(500).json({ error: "Không thể lưu dữ liệu tướng." });
+	}
+});
+
+/**
+ * @route   DELETE /api/champions/:championID
+ * @desc    Xóa tướng theo championID
+ */
+router.delete(
+	"/:championID",
+	authenticateCognitoToken,
+	requireAdmin,
+	async (req, res) => {
+		const { championID } = req.params;
+
+		if (
+			!championID ||
+			typeof championID !== "string" ||
+			championID.trim().length < 1
+		) {
+			return res.status(400).json({ error: "championID không hợp lệ." });
+		}
+
+		const id = championID.trim();
+
+		try {
+			const db = getDb();
+			const Item = await db.collection(CHAMPIONS_TABLE).findOne({ championID: id });
+
+			if (!Item) {
+				return res.status(404).json({ error: "Không tìm thấy tướng để xóa." });
+			}
+
+			await db.collection(CHAMPIONS_TABLE).deleteOne({ championID: id });
+
+			const deletedChampion = Item;
+
+			// Ghi log thay đổi
+			await createAuditLog({
+				action: "DELETE",
+				entityType: "champion",
+				entityId: id,
+				entityName: deletedChampion.name,
+				oldData: deletedChampion,
+				newData: null,
+				user: req.user
+			});
+			res.status(200).json({
+				message: `Tướng "${deletedChampion.name}" (ID: ${id}) đã được xóa thành công.`,
+			});
+		} catch (error) {
+			console.error("Lỗi khi xóa tướng:", error);
+			res.status(500).json({ error: "Không thể xóa tướng." });
+		}
+	},
+);
+
+export default router;

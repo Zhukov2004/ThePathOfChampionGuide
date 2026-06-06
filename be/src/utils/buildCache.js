@@ -1,0 +1,65 @@
+import { getDb } from "../config/mongo.js";
+import { normalizeDisplay } from "./dbHelpers.js";
+import { getUserNames } from "./userCache.js";
+import cacheManager from "./cacheManager.js";
+
+const BUILDS_TABLE = "guidePocBuilds";
+// Sử dụng cacheManager để quản lý bộ nhớ đệm theo userId (TTL 1 giờ)
+const publicBuildsCache = cacheManager.getOrCreateCache("public_builds", { 
+	stdTTL: 3600, 
+	checkperiod: 600 
+});
+
+/**
+ * Lấy danh sách build công khai (display: true) theo từng User
+ * Cache 1 giờ cho mỗi user/guest để tối ưu hiệu năng server
+ */
+export const getPublicBuilds = async (userId = "global") => {
+	const cached = await publicBuildsCache.get(userId);
+	if (cached) return cached;
+
+	try {
+		console.log(`[BuildCache] Fetching fresh public builds for: ${userId}`);
+		const db = getDb();
+		let Items = await db.collection(BUILDS_TABLE).find({ display: { $in: [true, "true"] } }).toArray();
+
+		let items = Items
+			? Items.map(item => normalizeDisplay(item))
+			: [];
+
+		// Gắn tên người tạo
+		if (items.length > 0) {
+			const usernames = [...new Set(items.map(i => i.creator))];
+			const userMap = await getUserNames(usernames);
+			items = items.map(item => ({
+				...item,
+				creatorName: userMap[item.creator] || item.creator,
+			}));
+		}
+
+		const data = { items };
+		await publicBuildsCache.set(userId, data);
+		return data;
+	} catch (error) {
+		console.error("Build cache error:", error);
+		return { items: [] };
+	}
+};
+
+/**
+ * XÓA CACHE CỦA MỘT NGƯỜI DÙNG CỤ THỂ
+ * Gọi khi người đó tạo/sửa/xóa build của chính họ
+ */
+export const invalidateUserBuildsCache = async (userId) => {
+	if (!userId) return;
+	await publicBuildsCache.del(userId);
+	console.log(`[BuildCache] Cache invalidated for user: ${userId}`);
+};
+
+/**
+ * XÓA TOÀN BỘ CACHE (Admin dùng hoặc khi có thay đổi lớn)
+ */
+export const invalidatePublicBuildsCache = async () => {
+	await publicBuildsCache.flushAll();
+	console.log("[BuildCache] Global public builds cache flushed");
+};
